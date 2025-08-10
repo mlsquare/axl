@@ -4,7 +4,8 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-AXL is a PyTorch library that implements approximate key-value linear layers using vector databases. It provides efficient approximate matrix multiplication through vector quantization and similarity search techniques.
+
+AXL is a PyTorch library that implements approximate key-value linear layers using vector databases. It provides efficient approximate matrix multiplication through vector quantization and similarity search techniques. The latest API uses `ApproximateLinear` and `ApproximateLinearConfig` for configuration and layer creation.
 
 ## Features
 
@@ -41,25 +42,28 @@ For NanoPQ backend:
 pip install nanopq
 ```
 
+
 ## Quick Start
 
 ```python
 import torch
-from axl import ApproxKVLinear, KVLinearConfig
+from axl.layer import ApproximateLinear, ApproximateLinearConfig, BackendType
 
 # Create configuration
-config = KVLinearConfig(
-    backend="faiss",
+config = ApproximateLinearConfig(
+    backend=BackendType.FAISS,
     energy_keep=0.98,
-    expected_K=32
+    expected_keys_per_query=32,
+    use_bias=True,
+    device="cpu"
 )
 
 # Create layer
-layer = ApproxKVLinear(in_features=128, out_features=64, config=config)
+layer = ApproximateLinear(in_features=128, out_features=64, config=config)
 
-# Prepare with calibration data
+# Initialize with calibration data
 calibration_data = torch.randn(1000, 128)
-layer.prepare(calibration_data=calibration_data)
+layer.initialize(calibration_data=calibration_data)
 
 # Use like a regular PyTorch layer
 input_data = torch.randn(32, 128)
@@ -68,29 +72,30 @@ output = layer(input_data)
 
 ## Usage Examples
 
+
 ### Basic Usage
 
 ```python
 import torch
-from axl import ApproxKVLinear, KVLinearConfig
+from axl.layer import ApproximateLinear, ApproximateLinearConfig, BackendType
 
 # Configure the layer
-config = KVLinearConfig(
-    backend="faiss",           # Use FAISS backend
-    nlist=1024,               # Number of clusters
-    nprobe=32,                # Clusters to probe during search
-    energy_keep=0.98,         # Keep 98% of SVD energy
-    expected_K=32,            # Expected keys per query
-    use_bias=True,            # Include bias term
-    use_ste=True              # Use Straight-Through Estimator
+config = ApproximateLinearConfig(
+    backend=BackendType.FAISS,           # Use FAISS backend
+    faiss_clusters=1024,                 # Number of clusters
+    faiss_probe_clusters=32,             # Clusters to probe during search
+    energy_keep=0.98,                    # Keep 98% of SVD energy
+    expected_keys_per_query=32,          # Expected keys per query
+    use_bias=True,                       # Include bias term
+    use_straight_through_estimator=True  # Use Straight-Through Estimator
 )
 
 # Create layer
-layer = ApproxKVLinear(in_features=256, out_features=128, config=config)
+layer = ApproximateLinear(in_features=256, out_features=128, config=config)
 
-# Prepare with calibration data
+# Initialize with calibration data
 calibration_data = torch.randn(1000, 256)
-layer.prepare(calibration_data=calibration_data)
+layer.initialize(calibration_data=calibration_data)
 
 # Training
 layer.train()
@@ -99,10 +104,8 @@ optimizer = torch.optim.Adam(layer.parameters(), lr=1e-3)
 for epoch in range(10):
     input_data = torch.randn(32, 256)
     target = torch.randn(32, 128)
-    
     output = layer(input_data)
     loss = torch.nn.functional.mse_loss(output, target)
-    
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
@@ -114,72 +117,73 @@ with torch.no_grad():
     result = layer(test_input)
 ```
 
+
 ### Using NanoPQ Backend
 
 ```python
-from axl import ApproxKVLinear, KVLinearConfig
+from axl.layer import ApproximateLinear, ApproximateLinearConfig, BackendType
 
-config = KVLinearConfig(
-    backend="nanopq",
-    npq_M_keys=8,     # Number of subvectors for keys
-    npq_Ks_keys=256,  # Codewords per subvector for keys
-    npq_M_vals=8,     # Number of subvectors for values
-    npq_Ks_vals=256,  # Codewords per subvector for values
+config = ApproximateLinearConfig(
+    backend=BackendType.NANOPQ,
+    nanopq_key_subvectors=8,     # Number of subvectors for keys
+    nanopq_key_codewords=256,    # Codewords per subvector for keys
+    nanopq_value_subvectors=8,   # Number of subvectors for values
+    nanopq_value_codewords=256,  # Codewords per subvector for values
     energy_keep=0.95
 )
 
-layer = ApproxKVLinear(in_features=512, out_features=256, config=config)
+layer = ApproximateLinear(in_features=512, out_features=256, config=config)
 ```
+
 
 ### Comparing Approximate vs Exact
 
 ```python
 # Approximate inference
-layer.cfg.approx_inference = True
+layer.config.use_approximate_inference = True
 approx_output = layer(input_data)
 
 # Exact inference
-layer.cfg.approx_inference = False
+layer.config.use_approximate_inference = False
 exact_output = layer(input_data)
 
 # Compare accuracy
-relative_error = (approx_output - exact_output).norm() / exact_output.norm()
+relative_error = (approx_output - exact_output).norm() / (exact_output.norm() + 1e-12)
 print(f"Relative error: {relative_error:.6f}")
 ```
 
 ## Configuration Options
 
-### KVLinearConfig Parameters
+
+### ApproximateLinearConfig Parameters
 
 #### Backend Selection
-- `backend`: Choose between "faiss" or "nanopq"
+- `backend`: Choose between `BackendType.FAISS` or `BackendType.NANOPQ`
 
 #### FAISS-specific Parameters
-- `nlist`: Number of clusters for IVFPQ (default: 4096)
-- `m_pq_keys`: Number of subvectors for key PQ (default: 8)
-- `nbits_keys`: Number of bits per subvector for key PQ (default: 8)
-- `nprobe`: Number of clusters to probe during search (default: 64)
-- `use_gpu`: Enable GPU acceleration (default: False)
-- `values_index_type`: Type of index for values ("PQ" or scalar quantization)
-- `m_pq_vals`: Number of subvectors for value PQ (default: 8)
-- `nbits_vals`: Number of bits per subvector for value PQ (default: 8)
-- `sq_type`: Scalar quantization type (default: "QT_8bit")
+- `faiss_clusters`: Number of clusters for IVFPQ (default: 4096)
+- `faiss_probe_clusters`: Number of clusters to probe during search (default: 64)
+- `faiss_key_subvectors`: Number of subvectors for key PQ (default: 8)
+- `faiss_key_bits`: Number of bits per subvector for key PQ (default: 8)
+- `faiss_value_subvectors`: Number of subvectors for value PQ (default: 8)
+- `faiss_value_bits`: Number of bits per subvector for value PQ (default: 8)
+- `faiss_use_gpu`: Enable GPU acceleration (default: False)
 
 #### NanoPQ-specific Parameters
-- `npq_M_keys`: Number of subvectors for key PQ (default: 8)
-- `npq_Ks_keys`: Number of codewords per subvector for key PQ (default: 256)
-- `npq_M_vals`: Number of subvectors for value PQ (default: 8)
-- `npq_Ks_vals`: Number of codewords per subvector for value PQ (default: 256)
+- `nanopq_key_subvectors`: Number of subvectors for key PQ (default: 8)
+- `nanopq_key_codewords`: Number of codewords per subvector for key PQ (default: 256)
+- `nanopq_value_subvectors`: Number of subvectors for value PQ (default: 8)
+- `nanopq_value_codewords`: Number of codewords per subvector for value PQ (default: 256)
 
 #### General Parameters
-- `energy_keep`: Fraction of energy to keep in SVD (default: 1.0)
-- `min_sigma`: Minimum singular value threshold (default: 0.0)
-- `ridge`: Ridge regularization for covariance estimation (default: 1e-6)
-- `expected_K`: Expected number of keys to retrieve per query (default: 64)
-- `refine_exact_with_float_keys`: Store float keys for exact refinement (default: False)
-- `use_ste`: Use Straight-Through Estimator during training (default: True)
-- `approx_inference`: Use approximation during inference (default: True)
+- `energy_keep`: Fraction of energy to keep in SVD (default: 0.98)
+- `min_singular_value`: Minimum singular value threshold (default: 0.0)
+- `ridge_regularization`: Ridge regularization for covariance estimation (default: 1e-6)
+- `expected_keys_per_query`: Expected number of keys to retrieve per query (default: 64)
+- `use_straight_through_estimator`: Use Straight-Through Estimator during training (default: True)
+- `use_approximate_inference`: Use approximation during inference (default: True)
 - `use_bias`: Include bias term (default: True)
+- `device`: Device for computation (default: "cpu")
 
 ## How It Works
 
@@ -214,8 +218,8 @@ If you use AXL in your research, please cite:
 ```bibtex
 @software{axl2024,
   title={AXL: Accelerated Linear Layers},
-  author={Your Name},
-  year={2024},
+  author={Soma S Dhavala},
+  year={2025},
   url={https://github.com/mlsquare/axl}
 }
 ```
