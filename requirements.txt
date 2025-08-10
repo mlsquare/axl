@@ -1,0 +1,9 @@
+python-dotenv==1.1.1
+numpy==2.2.6
+pandas==2.3.1
+torch==2.8.0
+faiss-cpu==1.11.0
+quarto==0.1.0
+nanopq==0.2.2
+matplotlib==3.10.5
+seaborn==0.13.2
